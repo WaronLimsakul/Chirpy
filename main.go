@@ -1,15 +1,22 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync/atomic"
+
+	"github.com/WaronLimsakul/Chirpy/internal/database"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 type apiConfig struct {
 	// atomic type used when keeping track something across go routine
 	fileServerHits atomic.Int32
+	queries        *database.Queries
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -45,11 +52,23 @@ func (cfg *apiConfig) resetFileServerHits(w http.ResponseWriter, req *http.Reque
 }
 
 func main() {
+	state := apiConfig{}
+	godotenv.Load() // load first so os can access.
+	dbURL := os.Getenv("DB_URL")
+
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// sqlc create this database package
+	// this function just connect the db to the queries
+	dbQueries := database.New(db)
+	state.queries = dbQueries
 
 	// servemux is like a server assistant
 	// - remember which request should go where
 	serveMux := http.NewServeMux()
-	state := apiConfig{}
 
 	// - Handle("/app/", handler) means catching a path /app (trailing / = and everything under it)
 	// Note that if many paths catch, it goes to the most specific one
