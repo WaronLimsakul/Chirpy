@@ -23,11 +23,18 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (cfg *apiConfig) reportFileServerHits(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(200)
 
 	// need to do .Load() to get the stored value
-	body := []byte(fmt.Sprintf("Hits: %d", cfg.fileServerHits.Load()))
+	body := []byte(fmt.Sprintf(`
+        <html>
+            <body>
+                <h1>Welcome, Chirpy Admin</h1>
+                <p>Chirpy has been visited %d times!</p>
+            </body>
+        </html>
+        `, cfg.fileServerHits.Load()))
 	w.Write(body)
 }
 
@@ -55,14 +62,14 @@ func main() {
 	serveMux.Handle("/app/", http.StripPrefix("/app", state.middlewareMetricsInc(rootFileServer)))
 
 	// the http.ResponseWriter is a portal to communicate with the response we will send
-	serveMux.HandleFunc("/healthz/", func(w http.ResponseWriter, r *http.Request) {
+	serveMux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(200)
 		w.Write([]byte("OK"))
 	})
 
-	serveMux.HandleFunc("/metrics", state.reportFileServerHits)
-	serveMux.HandleFunc("/reset", state.resetFileServerHits)
+	serveMux.HandleFunc("GET /admin/metrics", state.reportFileServerHits)
+	serveMux.HandleFunc("POST /admin/reset", state.resetFileServerHits)
 
 	server := &http.Server{Handler: serveMux, Addr: ":8080"}
 
