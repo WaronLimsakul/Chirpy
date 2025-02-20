@@ -71,9 +71,9 @@ func main() {
 	serveMux.HandleFunc("GET /admin/metrics", state.reportFileServerHits)
 	serveMux.HandleFunc("POST /admin/reset", state.resetFileServerHits)
 
-	server := &http.Server{Handler: serveMux, Addr: ":8080"}
+	serveMux.HandleFunc("POST /api/validate_chirp", validateChirp)
 
-	// do the strip things here.
+	server := &http.Server{Handler: serveMux, Addr: ":8080"}
 
 	log.Printf("Listen to port 8080\n")
 	log.Fatal(server.ListenAndServe())
