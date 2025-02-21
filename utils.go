@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/WaronLimsakul/Chirpy/internal/auth"
 	"github.com/WaronLimsakul/Chirpy/internal/database"
 	"github.com/google/uuid"
 )
@@ -89,10 +90,12 @@ func validateChirp(w http.ResponseWriter, r *http.Request) {
 	w.Write(resData)
 }
 
-// create user in db, we need "email" key in json body
+// create user in db, we need "email" and "password" key in json body
+// - not return hashed password in response
 func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	type reqBodyStruct struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -103,10 +106,20 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := req.Email
-	reqCtx := r.Context()
+	hashedPassword, err := auth.HashPassword(req.Password)
+	if err != nil {
+		log.Printf("%s", err)
+		w.WriteHeader(500)
+		return
+	}
 
-	newUser, err := cfg.dbQueries.CreateUser(reqCtx, email)
+	email := req.Email
+	userParams := database.CreateUserParams{
+		Email:          email,
+		HashedPassword: hashedPassword,
+	}
+
+	newUser, err := cfg.dbQueries.CreateUser(r.Context(), userParams)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(500)
@@ -252,6 +265,55 @@ func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resData, err := json.Marshal(resChirp)
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+
+	w.WriteHeader(200)
+	w.Write(resData)
+	return
+}
+
+// Request body has => "password" and "email"
+// 0. Decode body
+// 1. Get user by email first
+// 2. Compare password with the hash one
+// 3. Invalid password -> 401 , Valid -> 200
+func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
+	type reqBodyStruct struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	decoder := json.NewDecoder(r.Body)
+
+	var req reqBodyStruct
+	err := decoder.Decode(&req)
+	if err != nil {
+		w.WriteHeader(500)
+		log.Printf("%s", err)
+		return
+	}
+
+	user, err := cfg.dbQueries.GetUserByEmail(r.Context(), req.Email)
+	if err != nil {
+		w.WriteHeader(400)
+		return
+	}
+
+	unMatch := auth.CheckPasswordHash(req.Password, user.HashedPassword)
+	if unMatch != nil {
+		w.WriteHeader(401)
+		return
+	}
+
+	resBody := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+	resData, err := json.Marshal(resBody)
 	if err != nil {
 		w.WriteHeader(500)
 		return

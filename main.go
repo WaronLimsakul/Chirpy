@@ -121,9 +121,10 @@ func main() {
 	// serveMux.HandleFunc("POST /api/validate_chirp", validateChirp)
 	serveMux.HandleFunc("POST /api/chirps", state.createChirp)
 	serveMux.HandleFunc("GET /api/chirps", state.getAllChirps)
-	serveMux.HandleFunc("GET /api/chirps/{chirp_id}", state.getChirpByID)
+	serveMux.HandleFunc("GET /api/chirps/{chirp_id}", state.getChirpByID) // {?} is a wildcard
 
 	serveMux.HandleFunc("POST /api/users", state.createUser)
+	serveMux.HandleFunc("POST /api/login", state.loginUser)
 
 	server := &http.Server{Handler: serveMux, Addr: ":8080"}
 
