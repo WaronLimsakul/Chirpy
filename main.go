@@ -16,7 +16,8 @@ import (
 type apiConfig struct {
 	// atomic type used when keeping track something across go routine
 	fileServerHits atomic.Int32
-	queries        *database.Queries
+	dbQueries      *database.Queries
+	platform       string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -45,17 +46,36 @@ func (cfg *apiConfig) reportFileServerHits(w http.ResponseWriter, req *http.Requ
 	w.Write(body)
 }
 
-func (cfg *apiConfig) resetFileServerHits(w http.ResponseWriter, req *http.Request) {
+// 0. check if server platform is 'dev'
+// 1. reset file server hits
+// 2. reset users data
+func (cfg *apiConfig) resetServer(w http.ResponseWriter, req *http.Request) {
+	if cfg.platform != "dev" {
+		log.Println("not development env")
+		w.WriteHeader(403)
+		return
+	}
+
 	cfg.fileServerHits.Store(0)
+
+	if err := cfg.dbQueries.ResetUser(req.Context()); err != nil {
+		log.Println("error reseting user data")
+		w.WriteHeader(500)
+		return
+	}
+
 	w.WriteHeader(200)
-	w.Write([]byte("file server hits reset"))
+	w.Write([]byte("Server reset"))
 }
 
 func main() {
 	state := apiConfig{}
 	godotenv.Load() // load first so os can access.
-	dbURL := os.Getenv("DB_URL")
 
+	envPlatform := os.Getenv("PLATFORM")
+	state.platform = envPlatform
+
+	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal(err)
@@ -64,7 +84,7 @@ func main() {
 	// sqlc create this database package
 	// this function just connect the db to the queries
 	dbQueries := database.New(db)
-	state.queries = dbQueries
+	state.dbQueries = dbQueries
 
 	// servemux is like a server assistant
 	// - remember which request should go where
@@ -88,9 +108,10 @@ func main() {
 	})
 
 	serveMux.HandleFunc("GET /admin/metrics", state.reportFileServerHits)
-	serveMux.HandleFunc("POST /admin/reset", state.resetFileServerHits)
+	serveMux.HandleFunc("POST /admin/reset", state.resetServer)
 
 	serveMux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	serveMux.HandleFunc("POST /api/users", state.createUser)
 
 	server := &http.Server{Handler: serveMux, Addr: ":8080"}
 

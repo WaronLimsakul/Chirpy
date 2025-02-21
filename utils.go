@@ -5,7 +5,17 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+}
 
 // 1. parse request body
 // 2. gimmick, check 140 characters long or error
@@ -68,4 +78,47 @@ func validateChirp(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(200)
 	w.Write(resData)
+}
+
+// create user in db, we need "email" key in json body
+func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
+	type reqBodyStruct struct {
+		Email string `json:"email"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	req := reqBodyStruct{}
+	if err := decoder.Decode(&req); err != nil {
+		log.Println("error decoding request")
+		w.WriteHeader(500)
+		return
+	}
+
+	email := req.Email
+	reqCtx := r.Context()
+
+	newUser, err := cfg.dbQueries.CreateUser(reqCtx, email)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(500)
+		return
+	}
+
+	taggedNewUser := User{
+		ID:        newUser.ID,
+		CreatedAt: newUser.CreatedAt,
+		UpdatedAt: newUser.UpdatedAt,
+		Email:     newUser.Email,
+	}
+
+	resData, err := json.Marshal(taggedNewUser)
+	if err != nil {
+		log.Println("error marshalling data")
+		w.WriteHeader(500)
+		return
+	}
+
+	w.WriteHeader(201)
+	w.Write(resData)
+	return
 }
