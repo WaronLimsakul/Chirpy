@@ -58,8 +58,16 @@ func (cfg *apiConfig) resetServer(w http.ResponseWriter, req *http.Request) {
 
 	cfg.fileServerHits.Store(0)
 
-	if err := cfg.dbQueries.ResetUser(req.Context()); err != nil {
+	err := cfg.dbQueries.ResetUser(req.Context())
+	if err != nil {
 		log.Println("error reseting user data")
+		w.WriteHeader(500)
+		return
+	}
+
+	err = cfg.dbQueries.ResetChirp(req.Context())
+	if err != nil {
+		log.Println("error reseting chirp data")
 		w.WriteHeader(500)
 		return
 	}
@@ -110,7 +118,11 @@ func main() {
 	serveMux.HandleFunc("GET /admin/metrics", state.reportFileServerHits)
 	serveMux.HandleFunc("POST /admin/reset", state.resetServer)
 
-	serveMux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	// serveMux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	serveMux.HandleFunc("POST /api/chirps", state.createChirp)
+	serveMux.HandleFunc("GET /api/chirps", state.getAllChirps)
+	serveMux.HandleFunc("GET /api/chirps/{chirp_id}", state.getChirpByID)
+
 	serveMux.HandleFunc("POST /api/users", state.createUser)
 
 	server := &http.Server{Handler: serveMux, Addr: ":8080"}
