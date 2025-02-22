@@ -73,6 +73,13 @@ func (cfg *apiConfig) resetServer(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	err = cfg.dbQueries.ResetRefreshTokens(req.Context())
+	if err != nil {
+		log.Printf("%s", err)
+		w.WriteHeader(500)
+		return
+	}
+
 	w.WriteHeader(200)
 	w.Write([]byte("Server reset"))
 }
@@ -129,6 +136,8 @@ func main() {
 
 	serveMux.HandleFunc("POST /api/users", state.createUser)
 	serveMux.HandleFunc("POST /api/login", state.loginUser)
+	serveMux.HandleFunc("POST /api/refresh", state.refreshUser)
+	serveMux.HandleFunc("POST /api/revoke", state.revokeToken)
 
 	server := &http.Server{Handler: serveMux, Addr: ":8080"}
 

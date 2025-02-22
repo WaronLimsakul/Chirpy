@@ -20,11 +20,12 @@ type User struct {
 }
 
 type LoggedInUser struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token     string    `json:"token"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
 type Chirp struct {
@@ -298,17 +299,17 @@ func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, r *http.Request) {
 
 // Request body has => "password" and "email"
 // 0. Decode body
-// 1. If request specifies expiration set, it (default 1 hour)
-// 2. Get user by email first
+// 1. Set expire duration
+// 2. Get user by email
 // 3. Compare password with the hash one
-// 4. Create token for user
-// 5. Respond: Invalid password -> 401 , Valid -> 200
+// 4. Create access token for user
+// 5. Create refresh token for user
+// 6. Respond: Invalid password -> 401 , Valid -> 200
 func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
 	// Go guarantee zeo-initialize, so int is 0 if we reqBodyStruct{}
 	type reqBodyStruct struct {
-		Email            string `json:"email"`
-		Password         string `json:"password"`
-		ExpiresInSeconds int    `json:"expires_in_seconds"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	decoder := json.NewDecoder(r.Body)
 
@@ -321,13 +322,8 @@ func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// if it's literal int -> you can do int * Duration
-	// but if it's int variable -> you must cast time.Duration(x)
-	expiresIn := time.Second * time.Duration(req.ExpiresInSeconds)
-	// Not specified = 0, more than an hour > 3600, joking < 0
-	if req.ExpiresInSeconds <= 0 || req.ExpiresInSeconds > 3600 {
-		expiresIn = time.Hour
-	}
+	// 1.
+	expiresIn := time.Hour
 
 	// 2.
 	user, err := cfg.dbQueries.GetUserByEmail(r.Context(), req.Email)
@@ -352,12 +348,33 @@ func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5.
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		log.Printf("%s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	refreshTokenParams := database.CreateRefreshTokenParams{
+		Token:     refreshToken,
+		UserID:    user.ID,
+		ExpiresAt: time.Now().Add(time.Hour * 1440), // 60 days
+	}
+
+	_, err = cfg.dbQueries.CreateRefreshToken(r.Context(), refreshTokenParams)
+	if err != nil {
+		log.Printf("%s", err)
+		return
+	}
+
+	// 6.
 	resBody := LoggedInUser{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		Email:     user.Email,
-		Token:     token,
+		ID:           user.ID,
+		CreatedAt:    user.CreatedAt,
+		UpdatedAt:    user.UpdatedAt,
+		Email:        user.Email,
+		Token:        token,
+		RefreshToken: refreshToken,
 	}
 
 	resData, err := json.Marshal(resBody)
@@ -368,5 +385,63 @@ func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(200)
 	w.Write(resData)
+	return
+}
+
+// 1. extract token from header
+// 2. look up in database
+// 3. create a new JWT
+func (cfg *apiConfig) refreshUser(w http.ResponseWriter, r *http.Request) {
+	reqToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+
+	refreshToken, err := cfg.dbQueries.GetRefreshToken(r.Context(), reqToken)
+	// check if
+	// 1. token exists
+	// 2. exceeds expire date
+	// 3. got revoked
+	if err != nil || refreshToken.ExpiresAt.Before(time.Now()) || refreshToken.RevokedAt.Valid {
+		w.WriteHeader(401)
+		return
+	}
+
+	newToken, err := auth.MakeJWT(refreshToken.UserID, cfg.tokenSecret, time.Hour)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+
+	type resBody struct {
+		Token string `json:"token"`
+	}
+	res := resBody{
+		Token: newToken,
+	}
+
+	resData, err := json.Marshal(res)
+	w.WriteHeader(200)
+	w.Write(resData)
+}
+
+// revoke refresh token from the request
+func (cfg *apiConfig) revokeToken(w http.ResponseWriter, r *http.Request) {
+	reqToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		log.Printf("%s", err)
+		w.WriteHeader(400)
+		return
+	}
+
+	err = cfg.dbQueries.RevokeToken(r.Context(), reqToken)
+	if err != nil {
+		log.Printf("%s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	w.WriteHeader(204)
 	return
 }

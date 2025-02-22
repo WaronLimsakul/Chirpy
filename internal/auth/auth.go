@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
@@ -28,7 +30,9 @@ func CheckPasswordHash(password, hash string) error {
 
 // JWT is a way to authenticate user after log in (in the session).
 // It store users' data. Server issues a JWT, sign it (use token secret
-// to encode it to long string) and send back to client.
+// to convert json to long string) and send back to client.
+// NOTE: signing is NOT encoding. People can read JWT, but only
+// server, that has token secret, can validate it.
 func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
 	method := jwt.SigningMethodHS256
 	claim := jwt.RegisteredClaims{
@@ -48,7 +52,7 @@ func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 }
 
 // NOTE: only server can validate the JWT because only server knows
-// token secret (which used to encode the string)
+// token secret (which used to sign the string)
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	claimStruct := jwt.RegisteredClaims{}
 	// keyFunc will check if the token is valid (too lazy, not do it)
@@ -78,10 +82,10 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	return userUUID, nil
 }
 
-// extract the token string from header
-func GetBearerToken(headers http.Header) (string, error) {
+// extract the token string from header in form "Bearer <token>"
+func GetBearerToken(header http.Header) (string, error) {
 	// it should be in this form "Bearer TOKEN_STRING"
-	authorizationHeader := headers.Get("Authorization")
+	authorizationHeader := header.Get("Authorization")
 
 	tokenString, ok := strings.CutPrefix(authorizationHeader, "Bearer ")
 	if !ok {
@@ -89,4 +93,15 @@ func GetBearerToken(headers http.Header) (string, error) {
 	}
 
 	return tokenString, nil
+}
+
+// generate random 256-bit string data
+func MakeRefreshToken() (string, error) {
+	randomData := make([]byte, 32)
+	_, err := rand.Read(randomData)
+	if err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(randomData)
+	return token, nil
 }
