@@ -18,6 +18,7 @@ type apiConfig struct {
 	fileServerHits atomic.Int32
 	dbQueries      *database.Queries
 	platform       string
+	tokenSecret    string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -82,6 +83,9 @@ func main() {
 
 	envPlatform := os.Getenv("PLATFORM")
 	state.platform = envPlatform
+
+	envTokenSecret := os.Getenv("TOKEN_SECRET")
+	state.tokenSecret = envTokenSecret
 
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)

@@ -19,6 +19,14 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
+type LoggedInUser struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+	Token     string    `json:"token"`
+}
+
 type Chirp struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
@@ -145,13 +153,27 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+// 0. validate user by token in header
 // 1. validate chirp (get the above func's logic)
 // 2. create chrip in db
 // 3. return new chirp in json form
 func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		log.Printf("%s", err)
+		w.WriteHeader(400)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(token, cfg.tokenSecret)
+	if err != nil {
+		log.Printf("%s", err)
+		w.WriteHeader(401)
+		return
+	}
+
 	type reqBodyStruct struct {
-		Body   string    `json:"body"`
-		UserID uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -183,7 +205,6 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cleanedBody := strings.Join(resBodyWords, " ")
-	userID := req.UserID
 
 	params := database.CreateChirpParams{
 		Body:   cleanedBody,
@@ -277,16 +298,21 @@ func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, r *http.Request) {
 
 // Request body has => "password" and "email"
 // 0. Decode body
-// 1. Get user by email first
-// 2. Compare password with the hash one
-// 3. Invalid password -> 401 , Valid -> 200
+// 1. If request specifies expiration set, it (default 1 hour)
+// 2. Get user by email first
+// 3. Compare password with the hash one
+// 4. Create token for user
+// 5. Respond: Invalid password -> 401 , Valid -> 200
 func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
+	// Go guarantee zeo-initialize, so int is 0 if we reqBodyStruct{}
 	type reqBodyStruct struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		ExpiresInSeconds int    `json:"expires_in_seconds"`
 	}
 	decoder := json.NewDecoder(r.Body)
 
+	// 0.
 	var req reqBodyStruct
 	err := decoder.Decode(&req)
 	if err != nil {
@@ -295,24 +321,45 @@ func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// if it's literal int -> you can do int * Duration
+	// but if it's int variable -> you must cast time.Duration(x)
+	expiresIn := time.Second * time.Duration(req.ExpiresInSeconds)
+	// Not specified = 0, more than an hour > 3600, joking < 0
+	if req.ExpiresInSeconds <= 0 || req.ExpiresInSeconds > 3600 {
+		expiresIn = time.Hour
+	}
+
+	// 2.
 	user, err := cfg.dbQueries.GetUserByEmail(r.Context(), req.Email)
 	if err != nil {
 		w.WriteHeader(400)
 		return
 	}
 
+	// 3.
 	unMatch := auth.CheckPasswordHash(req.Password, user.HashedPassword)
 	if unMatch != nil {
 		w.WriteHeader(401)
 		return
 	}
 
-	resBody := User{
+	// 4.
+	token, err := auth.MakeJWT(user.ID, cfg.tokenSecret, expiresIn)
+	if err != nil {
+		log.Printf("%s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	// 5.
+	resBody := LoggedInUser{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
+		Token:     token,
 	}
+
 	resData, err := json.Marshal(resBody)
 	if err != nil {
 		w.WriteHeader(500)
