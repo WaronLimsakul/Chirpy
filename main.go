@@ -2,13 +2,14 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/WaronLimsakul/Chirpy/internal/database"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -21,67 +22,28 @@ type apiConfig struct {
 	tokenSecret    string
 }
 
-func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
-	// http.HandlerFunc is a function type that has method ServeHTTP -> call itself, lol
-	// the trick is called self-promotion = you are a functio but wanna be interface ?
-	// -> call yourself!
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg.fileServerHits.Add(1)
-		next.ServeHTTP(w, r)
-	})
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
-func (cfg *apiConfig) reportFileServerHits(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "text/html")
-	w.WriteHeader(200)
-
-	// need to do .Load() to get the stored value
-	body := []byte(fmt.Sprintf(`
-        <html>
-            <body>
-                <h1>Welcome, Chirpy Admin</h1>
-                <p>Chirpy has been visited %d times!</p>
-            </body>
-        </html>
-        `, cfg.fileServerHits.Load()))
-	w.Write(body)
+type LoggedInUser struct {
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
-// 0. check if server platform is 'dev'
-// 1. reset file server hits
-// 2. reset users data
-func (cfg *apiConfig) resetServer(w http.ResponseWriter, req *http.Request) {
-	if cfg.platform != "dev" {
-		log.Println("not development env")
-		w.WriteHeader(403)
-		return
-	}
-
-	cfg.fileServerHits.Store(0)
-
-	err := cfg.dbQueries.ResetUser(req.Context())
-	if err != nil {
-		log.Println("error reseting user data")
-		w.WriteHeader(500)
-		return
-	}
-
-	err = cfg.dbQueries.ResetChirp(req.Context())
-	if err != nil {
-		log.Println("error reseting chirp data")
-		w.WriteHeader(500)
-		return
-	}
-
-	err = cfg.dbQueries.ResetRefreshTokens(req.Context())
-	if err != nil {
-		log.Printf("%s", err)
-		w.WriteHeader(500)
-		return
-	}
-
-	w.WriteHeader(200)
-	w.Write([]byte("Server reset"))
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
 }
 
 func main() {
@@ -132,9 +94,11 @@ func main() {
 	// serveMux.HandleFunc("POST /api/validate_chirp", validateChirp)
 	serveMux.HandleFunc("POST /api/chirps", state.createChirp)
 	serveMux.HandleFunc("GET /api/chirps", state.getAllChirps)
-	serveMux.HandleFunc("GET /api/chirps/{chirp_id}", state.getChirpByID) // {?} is a wildcard
+	serveMux.HandleFunc("GET /api/chirps/{chirp_id}", state.getChirpByID)   // {?} is a wildcard
+	serveMux.HandleFunc("DELETE /api/chirps/{chirp_id}", state.deleteChirp) // {?} is a wildcard
 
 	serveMux.HandleFunc("POST /api/users", state.createUser)
+	serveMux.HandleFunc("PUT /api/users", state.updateUser)
 	serveMux.HandleFunc("POST /api/login", state.loginUser)
 	serveMux.HandleFunc("POST /api/refresh", state.refreshUser)
 	serveMux.HandleFunc("POST /api/revoke", state.revokeToken)
