@@ -8,6 +8,7 @@ import (
 
 	"github.com/WaronLimsakul/Chirpy/internal/auth"
 	"github.com/WaronLimsakul/Chirpy/internal/database"
+	"github.com/google/uuid"
 )
 
 // create user in db, we need "email" and "password" key in json body
@@ -47,10 +48,11 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	taggedNewUser := User{
-		ID:        newUser.ID,
-		CreatedAt: newUser.CreatedAt,
-		UpdatedAt: newUser.UpdatedAt,
-		Email:     newUser.Email,
+		ID:          newUser.ID,
+		CreatedAt:   newUser.CreatedAt,
+		UpdatedAt:   newUser.UpdatedAt,
+		Email:       newUser.Email,
+		IsChirpyRed: newUser.IsChirpyRed,
 	}
 
 	resData, err := json.Marshal(taggedNewUser)
@@ -143,6 +145,7 @@ func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
 		Email:        user.Email,
 		Token:        token,
 		RefreshToken: refreshToken,
+		IsChirpyRed:  user.IsChirpyRed,
 	}
 
 	resData, err := json.Marshal(resBody)
@@ -263,10 +266,11 @@ func (cfg *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res := User{
-		ID:        updatedUser.ID,
-		CreatedAt: updatedUser.CreatedAt,
-		UpdatedAt: updatedUser.UpdatedAt,
-		Email:     updatedUser.Email,
+		ID:          updatedUser.ID,
+		CreatedAt:   updatedUser.CreatedAt,
+		UpdatedAt:   updatedUser.UpdatedAt,
+		Email:       updatedUser.Email,
+		IsChirpyRed: updatedUser.IsChirpyRed,
 	}
 
 	resData, err := json.Marshal(res)
@@ -278,5 +282,61 @@ func (cfg *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(200)
 	w.Write(resData)
+	return
+}
+
+// we need
+// 1. "Authorization" = "ApiKey <key>" in the header
+// 2."event" = "user.upgraded"  in body
+// 3."data" = {"user_id" : "..."} in body
+func (cfg *apiConfig) reddenUser(w http.ResponseWriter, r *http.Request) {
+	reqAPIKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		log.Printf("error at reddenUser: %s", err)
+		w.WriteHeader(401)
+		return
+	}
+
+	if reqAPIKey != cfg.polkaKey {
+		w.WriteHeader(401)
+		return
+	}
+
+	type reqBodyStruct struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserID string `json:"user_id"`
+		} `json:"data"`
+	}
+
+	reqBody := reqBodyStruct{}
+	decoder := json.NewDecoder(r.Body)
+	err = decoder.Decode(&reqBody)
+	if err != nil {
+		log.Printf("error decoding body in reddenUser: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	if reqBody.Event != "user.upgraded" {
+		w.WriteHeader(204)
+		return
+	}
+
+	userUUID, err := uuid.Parse(reqBody.Data.UserID)
+	if err != nil {
+		log.Printf("error parsing user uuid at ReddenUser: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	err = cfg.dbQueries.ReddenUserByID(r.Context(), userUUID)
+	if err != nil {
+		log.Printf("error parsing user uuid at ReddenUser: %s", err)
+		w.WriteHeader(404)
+		return
+	}
+
+	w.WriteHeader(204)
 	return
 }

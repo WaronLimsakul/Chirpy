@@ -20,13 +20,15 @@ type apiConfig struct {
 	dbQueries      *database.Queries
 	platform       string
 	tokenSecret    string
+	polkaKey       string
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	ID          uuid.UUID `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Email       string    `json:"email"`
+	IsChirpyRed bool      `json:"is_chirpy_red"`
 }
 
 type LoggedInUser struct {
@@ -36,6 +38,7 @@ type LoggedInUser struct {
 	Email        string    `json:"email"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 type Chirp struct {
@@ -55,6 +58,9 @@ func main() {
 
 	envTokenSecret := os.Getenv("TOKEN_SECRET")
 	state.tokenSecret = envTokenSecret
+
+	envPolkaKey := os.Getenv("POLKA_KEY")
+	state.polkaKey = envPolkaKey
 
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
@@ -102,6 +108,8 @@ func main() {
 	serveMux.HandleFunc("POST /api/login", state.loginUser)
 	serveMux.HandleFunc("POST /api/refresh", state.refreshUser)
 	serveMux.HandleFunc("POST /api/revoke", state.revokeToken)
+
+	serveMux.HandleFunc("POST /api/polka/webhooks", state.reddenUser)
 
 	server := &http.Server{Handler: serveMux, Addr: ":8080"}
 

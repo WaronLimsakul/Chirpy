@@ -105,3 +105,15 @@ func MakeRefreshToken() (string, error) {
 	token := hex.EncodeToString(randomData)
 	return token, nil
 }
+
+// extract api-key from "Authorization" header
+// in "Api <key>" form
+func GetAPIKey(headers http.Header) (string, error) {
+	authorizationHeader := headers.Get("Authorization")
+	apiKey, ok := strings.CutPrefix(authorizationHeader, "ApiKey ")
+	if !ok {
+		return "", fmt.Errorf("Not found api key")
+	}
+
+	return apiKey, nil
+}
