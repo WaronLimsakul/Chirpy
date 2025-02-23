@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/WaronLimsakul/Chirpy/internal/auth"
@@ -153,12 +154,35 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	w.Write(resData)
 }
 
+// If no query params -> return all chirps in ascending order
+// if theris ?author_id=xxxx , I need only chirp of that author
+// if there  ?sort=asc/desc, do as it said
 func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
-	chirps, err := cfg.dbQueries.GetAllChirps(r.Context())
-	if err != nil {
-		log.Printf("%s", err)
-		w.WriteHeader(500)
-		return
+	authorID := r.URL.Query().Get("author_id")
+	var chirps []database.Chirp
+	var err error
+
+	if authorID != "" {
+		authorUUID, err := uuid.Parse(authorID)
+		if err != nil {
+			log.Printf("%s", err)
+			w.WriteHeader(500)
+			return
+		}
+
+		chirps, err = cfg.dbQueries.GetChirpByAuthorID(r.Context(), authorUUID)
+		if err != nil {
+			log.Printf("%s", err)
+			w.WriteHeader(500)
+			return
+		}
+	} else {
+		chirps, err = cfg.dbQueries.GetAllChirps(r.Context())
+		if err != nil {
+			log.Printf("%s", err)
+			w.WriteHeader(500)
+			return
+		}
 	}
 
 	var resChirps []Chirp
@@ -171,6 +195,19 @@ func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
 			UserID:    chirp.UserID,
 		}
 		resChirps = append(resChirps, resChirp)
+	}
+
+	sortOrder := r.URL.Query().Get("sort")
+	if sortOrder == "desc" {
+		// the lambda receive 2 indeces, return true if you want the first
+		// one to come first
+		sort.Slice(resChirps, func(i int, j int) bool {
+			return resChirps[i].CreatedAt.After(resChirps[j].CreatedAt)
+		})
+	} else {
+		sort.Slice(resChirps, func(i int, j int) bool {
+			return resChirps[i].CreatedAt.Before(resChirps[j].CreatedAt)
+		})
 	}
 
 	resData, err := json.Marshal(resChirps)
